@@ -156,7 +156,7 @@ func (enc *Encoder) Encode(v interface{}) error {
 	if enc.err != nil {
 		return enc.err
 	}
-	e := newEncodeState()
+	e := newEncodeState(enc.w)
 	err := e.marshal(v)
 	if err != nil {
 		return err
@@ -170,9 +170,11 @@ func (enc *Encoder) Encode(v interface{}) error {
 	// digits coming.
 	e.WriteByte('\n')
 
-	if _, err = enc.w.Write(e.Bytes()); err != nil {
-		enc.err = err
-	}
+	// @ydnar: Modified encodeState has embedded io.Writer,
+	// so all writes have already happened.
+	// if _, err = enc.w.Write(e.Bytes()); err != nil {
+	// 	enc.err = err
+	// }
 	encodeStatePool.Put(e)
 	return err
 }

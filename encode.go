@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"encoding"
 	"encoding/base64"
+	"io"
 	"math"
 	"reflect"
 	"runtime"
@@ -136,7 +137,7 @@ func Marshal(v interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return e.Bytes(), nil
+	return e.buf.Bytes(), nil
 }
 
 // MarshalIndent is like Marshal but applies Indent to format the output.
@@ -238,21 +239,54 @@ func (e *MarshalerError) Error() string {
 
 var hex = "0123456789abcdef"
 
+// Writer encapsulates the write methods of a JSON encodeState.
+type Writer interface {
+	Write([]byte) (int, error)
+	WriteString(s string) (int, error)
+	WriteByte(byte) error
+}
+
 // An encodeState encodes JSON into a bytes.Buffer.
 type encodeState struct {
-	bytes.Buffer // accumulated output
-	scratch      [64]byte
+	buf     bytes.Buffer // accumulated output
+	scratch [64]byte
+	w       io.Writer // output
 }
 
 var encodeStatePool sync.Pool
 
-func newEncodeState() *encodeState {
+func newEncodeState(w io.Writer) (e *encodeState) {
 	if v := encodeStatePool.Get(); v != nil {
-		e := v.(*encodeState)
-		e.Reset()
+		e = v.(*encodeState)
+		e.buf.Reset()
+		e.w = w
 		return e
 	}
-	return new(encodeState)
+	e = &encodeState{w: w}
+	return
+}
+
+func (e *encodeState) Write(p []byte) (int, error) {
+	if e.w == nil {
+		return e.buf.Write(p)
+	}
+	return e.w.Write(p)
+}
+
+func (e *encodeState) WriteString(s string) (int, error) {
+	if e.w == nil {
+		return e.buf.WriteString(s)
+	}
+	return e.w.Write([]byte(s))
+}
+
+func (e *encodeState) WriteByte(c byte) error {
+	if e.w == nil {
+		_, err := e.buf.Write([]byte{c})
+		return err
+	}
+	_, err := e.w.Write([]byte{c})
+	return err
 }
 
 func (e *encodeState) marshal(v interface{}) (err error) {
@@ -416,7 +450,7 @@ func marshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(&e.Buffer, b, true)
+		err = compact(e, b, true)
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
@@ -433,7 +467,7 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(&e.Buffer, b, true)
+		err = compact(e, b, true)
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
@@ -783,7 +817,7 @@ func (sv stringValues) get(i int) string   { return sv[i].String() }
 
 // NOTE: keep in sync with stringBytes below.
 func (e *encodeState) string(s string) (int, error) {
-	len0 := e.Len()
+	len0 := e.buf.Len()
 	e.WriteByte('"')
 	start := 0
 	for i := 0; i < len(s); {
@@ -854,12 +888,12 @@ func (e *encodeState) string(s string) (int, error) {
 		e.WriteString(s[start:])
 	}
 	e.WriteByte('"')
-	return e.Len() - len0, nil
+	return e.buf.Len() - len0, nil
 }
 
 // NOTE: keep in sync with string above.
 func (e *encodeState) stringBytes(s []byte) (int, error) {
-	len0 := e.Len()
+	len0 := e.buf.Len()
 	e.WriteByte('"')
 	start := 0
 	for i := 0; i < len(s); {
@@ -930,7 +964,7 @@ func (e *encodeState) stringBytes(s []byte) (int, error) {
 		e.Write(s[start:])
 	}
 	e.WriteByte('"')
-	return e.Len() - len0, nil
+	return e.buf.Len() - len0, nil
 }
 
 // A field represents a single field found in a struct.
