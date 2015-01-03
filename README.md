@@ -4,16 +4,24 @@ Experimental streaming JSON for Go.
 
 ## Goal
 
-Extend Go’s `encoding/json` package to enable streaming JSON writes to an `io.Writer` without accumulating the *entire* marshalled JSON into an intermediate buffer.
+The `jsonio` package extends Go’s `json.Encoder` to enable streaming JSON writes by periodically flushing to an `io.Writer` (by default, every 256 bytes). By not accumumulating the entire marshalled JSON into an intermediate buffer, this enables:
 
-This would allow Go programs to emit structures too large to fit in memory, or slow producers (say in a goroutine) to emit JSON to an intermittently flushed `io.Writer`. As a secondary goal, enable JSON encoding of channels.
+- Go programs to emit structures of unbounded (or unknown) size.
+- Slow producers (in another goroutine) to emit JSON via an embedded channel.
 
-## Design
+## Usage
 
 ```go
-// Implementations of the JSONWriter interface can write a JSON representation of itself to w.
-type JSONWriter interface {
-  WriteJSON(w io.Writer) (n int, err error)
+type Firehose struct {
+  Tweets chan Tweet `json:"tweets"`
+}
+
+func StreamTweets(w http.ResponseWriter, f *Firehose) {
+  enc := jsonio.NewEncoder(w)
+  err := enc.Encode(f) // Returns when f.Tweets closes
+  if err != nil {
+    ...
+  }
 }
 ```
 
