@@ -530,3 +530,108 @@ func TestEncodeString(t *testing.T) {
 		}
 	}
 }
+
+func TestEncodeNilChan(t *testing.T) {
+	var c chan bool
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `null`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+func TestEncodeChanNil(t *testing.T) {
+	c := make(chan *struct{})
+	go func() {
+		c <- nil
+		c <- nil
+		c <- nil
+		close(c)
+	}()
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `[null,null,null]`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+func TestEncodeChanBool(t *testing.T) {
+	c := make(chan bool)
+	go func() {
+		c <- true
+		c <- true
+		c <- true
+		close(c)
+	}()
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `[true,true,true]`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+func TestEncodeChanInt(t *testing.T) {
+	c := make(chan int)
+	go func() {
+		c <- 0
+		c <- 1
+		c <- 2
+		close(c)
+	}()
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `[0,1,2]`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+func TestEncodeChanString(t *testing.T) {
+	c := make(chan string)
+	go func() {
+		c <- "foo"
+		c <- "bar"
+		c <- "baz"
+		close(c)
+	}()
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `["foo","bar","baz"]`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+func TestEncodeChanStruct(t *testing.T) {
+	type s struct {
+		N string `json:"n"`
+	}
+	c := make(chan s)
+	go func() {
+		c <- s{"foo"}
+		c <- s{"bar"}
+		c <- s{""}
+		close(c)
+	}()
+	result, err := Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := `[{"n":"foo"},{"n":"bar"},{"n":""}]`
+	if string(result) != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}

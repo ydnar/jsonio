@@ -444,6 +444,8 @@ func newTypeEncoder(t reflect.Type, allowAddr bool) encoderFunc {
 		return newArrayEncoder(t)
 	case reflect.Ptr:
 		return newPtrEncoder(t)
+	case reflect.Chan:
+		return newChanEncoder(t)
 	default:
 		return unsupportedTypeEncoder
 	}
@@ -754,6 +756,34 @@ func (pe *ptrEncoder) encode(e *encodeState, v reflect.Value, quoted bool) {
 
 func newPtrEncoder(t reflect.Type) encoderFunc {
 	enc := &ptrEncoder{typeEncoder(t.Elem())}
+	return enc.encode
+}
+
+type chanEncoder struct {
+	elemEnc encoderFunc
+}
+
+func (ae *chanEncoder) encode(e *encodeState, v reflect.Value, _ bool) {
+	if v.IsNil() {
+		e.WriteString("null")
+		return
+	}
+	e.WriteByte('[')
+	for i := 0; true; i++ {
+		ve, ok := v.Recv()
+		if !ok {
+			break
+		}
+		if i > 0 {
+			e.WriteByte(',')
+		}
+		ae.elemEnc(e, ve, false)
+	}
+	e.WriteByte(']')
+}
+
+func newChanEncoder(t reflect.Type) encoderFunc {
+	enc := &chanEncoder{typeEncoder(t.Elem())}
 	return enc.encode
 }
 
