@@ -1,6 +1,8 @@
 # jsonio
 
-Experimental streaming JSON for Go.
+Streaming JSON for Go.
+
+**This project has moved to: https://github.com/ydnar/go/compare/jsonio**
 
 ## Goal
 
