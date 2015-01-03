@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -634,4 +636,47 @@ func TestEncodeChanStruct(t *testing.T) {
 	if string(result) != expect {
 		t.Errorf(" got %s want %s", result, expect)
 	}
+}
+
+func TestEncodeFlush(t *testing.T) {
+	c := make(chan string)
+	s := strings.Repeat("x", 256) // maxBuffer
+	go func() {
+		for i := 0; i < 3; i++ {
+			c <- s
+			time.Sleep(50 * time.Millisecond) // Simulate slow writer
+		}
+		close(c)
+	}()
+
+	w := &logWriter{}
+	enc := NewEncoder(w)
+	err := enc.Encode(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{
+		"[\"" + s + "\"",
+		",\"" + s + "\"",
+		",\"" + s + "\"",
+		"]\n",
+	}
+	result := strings.Join(w.writes, "\n")
+	expect := strings.Join(expected, "\n")
+	if len(w.writes) != len(expected) {
+		t.Errorf(" got %d writes, want %d writes", len(w.writes), len(expected))
+	}
+	if result != expect {
+		t.Errorf(" got %s want %s", result, expect)
+	}
+}
+
+type logWriter struct {
+	writes []string
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	w.writes = append(w.writes, string(p))
+	return len(p), nil
 }

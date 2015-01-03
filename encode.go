@@ -51,6 +51,11 @@ import (
 // []byte encodes as a base64-encoded string, and a nil slice
 // encodes as the null JSON object.
 //
+// Channel values encode as JSON arrays. Encoding will block until the
+// channel closes. Callers must close a channel before encoding, or ensure
+// the channel is closed in another goroutine. A nil channel encodes
+// as the null JSON object.
+//
 // Struct values encode as JSON objects. Each exported struct field
 // becomes a member of the object unless
 //   - the field's tag is "-", or
@@ -80,8 +85,8 @@ import (
 //
 // The "string" option signals that a field is stored as JSON inside a
 // JSON-encoded string. It applies only to fields of string, floating point,
-// or integer types. This extra level of encoding is sometimes used when
-// communicating with JavaScript programs:
+// integer, or boolean types. This extra level of encoding is sometimes used
+// when communicating with JavaScript programs:
 //
 //    Int64String int64 `json:",string"`
 //
@@ -123,7 +128,7 @@ import (
 // Interface values encode as the value contained in the interface.
 // A nil interface value encodes as the null JSON object.
 //
-// Channel, complex, and function values cannot be encoded in JSON.
+// Complex and function values cannot be encoded in JSON.
 // Attempting to encode such a value causes Marshal to return
 // an UnsupportedTypeError.
 //
@@ -468,6 +473,8 @@ func marshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
+	} else {
+		e.flush(false) // Flush here, since compact wrote directly to the buffer
 	}
 }
 
@@ -485,6 +492,8 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
+	} else {
+		e.flush(false) // Flush here, since compact wrote directly to the buffer
 	}
 }
 
@@ -860,7 +869,7 @@ func (sv stringValues) get(i int) string   { return sv[i].String() }
 // NOTE: keep in sync with stringBytes below.
 func (e *encodeState) string(s string) (int, error) {
 	len0 := e.buf.Len()
-	e.WriteByte('"')
+	e.buf.WriteByte('"')
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
@@ -869,29 +878,29 @@ func (e *encodeState) string(s string) (int, error) {
 				continue
 			}
 			if start < i {
-				e.WriteString(s[start:i])
+				e.buf.WriteString(s[start:i])
 			}
 			switch b {
 			case '\\', '"':
-				e.WriteByte('\\')
-				e.WriteByte(b)
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte(b)
 			case '\n':
-				e.WriteByte('\\')
-				e.WriteByte('n')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('n')
 			case '\r':
-				e.WriteByte('\\')
-				e.WriteByte('r')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('r')
 			case '\t':
-				e.WriteByte('\\')
-				e.WriteByte('t')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('t')
 			default:
 				// This encodes bytes < 0x20 except for \n and \r,
 				// as well as <, > and &. The latter are escaped because they
 				// can lead to security holes when user-controlled strings
 				// are rendered into JSON and served to some browsers.
-				e.WriteString(`\u00`)
-				e.WriteByte(hex[b>>4])
-				e.WriteByte(hex[b&0xF])
+				e.buf.WriteString(`\u00`)
+				e.buf.WriteByte(hex[b>>4])
+				e.buf.WriteByte(hex[b&0xF])
 			}
 			i++
 			start = i
@@ -900,9 +909,9 @@ func (e *encodeState) string(s string) (int, error) {
 		c, size := utf8.DecodeRuneInString(s[i:])
 		if c == utf8.RuneError && size == 1 {
 			if start < i {
-				e.WriteString(s[start:i])
+				e.buf.WriteString(s[start:i])
 			}
-			e.WriteString(`\ufffd`)
+			e.buf.WriteString(`\ufffd`)
 			i += size
 			start = i
 			continue
@@ -916,10 +925,10 @@ func (e *encodeState) string(s string) (int, error) {
 		// See http://timelessrepo.com/json-isnt-a-javascript-subset for discussion.
 		if c == '\u2028' || c == '\u2029' {
 			if start < i {
-				e.WriteString(s[start:i])
+				e.buf.WriteString(s[start:i])
 			}
-			e.WriteString(`\u202`)
-			e.WriteByte(hex[c&0xF])
+			e.buf.WriteString(`\u202`)
+			e.buf.WriteByte(hex[c&0xF])
 			i += size
 			start = i
 			continue
@@ -927,16 +936,18 @@ func (e *encodeState) string(s string) (int, error) {
 		i += size
 	}
 	if start < len(s) {
-		e.WriteString(s[start:])
+		e.buf.WriteString(s[start:])
 	}
-	e.WriteByte('"')
-	return e.buf.Len() - len0, nil
+	e.buf.WriteByte('"')
+	n := e.buf.Len() - len0
+	e.flush(false) // Flush here, since we wrote directly to the buffer
+	return n, nil
 }
 
 // NOTE: keep in sync with string above.
 func (e *encodeState) stringBytes(s []byte) (int, error) {
 	len0 := e.buf.Len()
-	e.WriteByte('"')
+	e.buf.WriteByte('"')
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
@@ -945,29 +956,29 @@ func (e *encodeState) stringBytes(s []byte) (int, error) {
 				continue
 			}
 			if start < i {
-				e.Write(s[start:i])
+				e.buf.Write(s[start:i])
 			}
 			switch b {
 			case '\\', '"':
-				e.WriteByte('\\')
-				e.WriteByte(b)
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte(b)
 			case '\n':
-				e.WriteByte('\\')
-				e.WriteByte('n')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('n')
 			case '\r':
-				e.WriteByte('\\')
-				e.WriteByte('r')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('r')
 			case '\t':
-				e.WriteByte('\\')
-				e.WriteByte('t')
+				e.buf.WriteByte('\\')
+				e.buf.WriteByte('t')
 			default:
 				// This encodes bytes < 0x20 except for \n and \r,
 				// as well as <, >, and &. The latter are escaped because they
 				// can lead to security holes when user-controlled strings
 				// are rendered into JSON and served to some browsers.
-				e.WriteString(`\u00`)
-				e.WriteByte(hex[b>>4])
-				e.WriteByte(hex[b&0xF])
+				e.buf.WriteString(`\u00`)
+				e.buf.WriteByte(hex[b>>4])
+				e.buf.WriteByte(hex[b&0xF])
 			}
 			i++
 			start = i
@@ -976,9 +987,9 @@ func (e *encodeState) stringBytes(s []byte) (int, error) {
 		c, size := utf8.DecodeRune(s[i:])
 		if c == utf8.RuneError && size == 1 {
 			if start < i {
-				e.Write(s[start:i])
+				e.buf.Write(s[start:i])
 			}
-			e.WriteString(`\ufffd`)
+			e.buf.WriteString(`\ufffd`)
 			i += size
 			start = i
 			continue
@@ -992,10 +1003,10 @@ func (e *encodeState) stringBytes(s []byte) (int, error) {
 		// See http://timelessrepo.com/json-isnt-a-javascript-subset for discussion.
 		if c == '\u2028' || c == '\u2029' {
 			if start < i {
-				e.Write(s[start:i])
+				e.buf.Write(s[start:i])
 			}
-			e.WriteString(`\u202`)
-			e.WriteByte(hex[c&0xF])
+			e.buf.WriteString(`\u202`)
+			e.buf.WriteByte(hex[c&0xF])
 			i += size
 			start = i
 			continue
@@ -1003,10 +1014,12 @@ func (e *encodeState) stringBytes(s []byte) (int, error) {
 		i += size
 	}
 	if start < len(s) {
-		e.Write(s[start:])
+		e.buf.Write(s[start:])
 	}
-	e.WriteByte('"')
-	return e.buf.Len() - len0, nil
+	e.buf.WriteByte('"')
+	n := e.buf.Len() - len0
+	e.flush(false) // Flush here, since we wrote directly to the buffer
+	return n, nil
 }
 
 // A field represents a single field found in a struct.
