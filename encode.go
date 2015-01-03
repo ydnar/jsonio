@@ -239,53 +239,65 @@ func (e *MarshalerError) Error() string {
 
 var hex = "0123456789abcdef"
 
-// Writer encapsulates the write methods of a JSON encodeState.
-type Writer interface {
-	Write([]byte) (int, error)
-	WriteString(s string) (int, error)
-	WriteByte(byte) error
-}
-
-// An encodeState encodes JSON into a bytes.Buffer.
+// An encodeState encodes JSON into a bytes.Buffer,
+// optionally flushing to an io.Writer.
 type encodeState struct {
 	buf     bytes.Buffer // accumulated output
+	w       io.Writer    // optional
 	scratch [64]byte
-	w       io.Writer // output
 }
 
 var encodeStatePool sync.Pool
 
-func newEncodeState(w io.Writer) (e *encodeState) {
+func newEncodeState() *encodeState {
 	if v := encodeStatePool.Get(); v != nil {
-		e = v.(*encodeState)
+		e := v.(*encodeState)
 		e.buf.Reset()
-		e.w = w
 		return e
 	}
-	e = &encodeState{w: w}
-	return
+	return new(encodeState)
+}
+
+const maxBuffer = 256 // bytes
+
+func (e *encodeState) flush(force bool) error {
+	// @ydnar: Non-streaming encoders don’t have a writer.
+	if e.w == nil {
+		return nil
+	}
+	if force || e.buf.Len() > maxBuffer {
+		b := e.buf.Bytes()
+		n, err := e.w.Write(b)
+		e.buf.Reset()
+		if n != len(b) {
+			e.buf.Write(b[n:]) // Keep remaining bytes in the buffer
+		}
+		return err
+	}
+	return nil
 }
 
 func (e *encodeState) Write(p []byte) (int, error) {
-	if e.w == nil {
-		return e.buf.Write(p)
+	n, err := e.buf.Write(p)
+	if err == nil {
+		err = e.flush(false)
 	}
-	return e.w.Write(p)
+	return n, err
 }
 
 func (e *encodeState) WriteString(s string) (int, error) {
-	if e.w == nil {
-		return e.buf.WriteString(s)
+	n, err := e.buf.WriteString(s)
+	if err == nil {
+		err = e.flush(false)
 	}
-	return e.w.Write([]byte(s))
+	return n, err
 }
 
 func (e *encodeState) WriteByte(c byte) error {
-	if e.w == nil {
-		_, err := e.buf.Write([]byte{c})
-		return err
+	err := e.buf.WriteByte(c)
+	if err == nil {
+		err = e.flush(false)
 	}
-	_, err := e.w.Write([]byte{c})
 	return err
 }
 
@@ -450,7 +462,7 @@ func marshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(e, b, true)
+		err = compact(&e.buf, b, true)
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})
@@ -467,7 +479,7 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, quoted bool) {
 	b, err := m.MarshalJSON()
 	if err == nil {
 		// copy JSON into buffer, checking validity.
-		err = compact(e, b, true)
+		err = compact(&e.buf, b, true)
 	}
 	if err != nil {
 		e.error(&MarshalerError{v.Type(), err})

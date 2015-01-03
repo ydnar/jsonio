@@ -8,12 +8,12 @@ import "bytes"
 
 // Compact appends to dst the JSON-encoded src with
 // insignificant space characters elided.
-func Compact(dst Writer, src []byte) error {
+func Compact(dst *bytes.Buffer, src []byte) error {
 	return compact(dst, src, false)
 }
 
-func compact(dst Writer, src []byte, escape bool) error {
-	// origLen := dst.buf.Len()// @ydnar: FIXME: this preserved original buffer length, now gone.
+func compact(dst *bytes.Buffer, src []byte, escape bool) error {
+	origLen := dst.Len()
 	var scan scanner
 	scan.reset()
 	start := 0
@@ -48,7 +48,7 @@ func compact(dst Writer, src []byte, escape bool) error {
 		}
 	}
 	if scan.eof() == scanError {
-		// dst.Truncate(origLen)
+		dst.Truncate(origLen)
 		return scan.err
 	}
 	if start < len(src) {
@@ -73,7 +73,7 @@ func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 // any indentation, and has no trailing newline, to make it
 // easier to embed inside other formatted JSON data.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	// origLen := dst.buf.Len()
+	origLen := dst.Len()
 	var scan scanner
 	scan.reset()
 	needIndent := false
@@ -130,7 +130,7 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 		}
 	}
 	if scan.eof() == scanError {
-		// dst.Truncate(origLen)
+		dst.Truncate(origLen)
 		return scan.err
 	}
 	return nil
